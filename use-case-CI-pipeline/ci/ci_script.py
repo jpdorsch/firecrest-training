@@ -77,8 +77,7 @@ def main():
         repo=args.repo,
         num_nodes=2,
         account=args.account,
-        reservation=args.reservation,
-        custom_modules=["cray", "cray-python"],
+        reservation=args.reservation,        
         branch=ref,
     )
 
