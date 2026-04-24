@@ -1,10 +1,9 @@
-#
 #  Copyright (c) 2025, ETH Zurich. All rights reserved.
 #
 #  Please, refer to the LICENSE file in the root directory.
 #  SPDX-License-Identifier: BSD-3-Clause
 #
-import firecrest as fc
+import firecrest as f7t
 import os
 import time
 import argparse
@@ -51,8 +50,9 @@ def main():
         "--system", default=os.environ.get("FIRECREST_SYSTEM"), help="choose system to run"
     )
     parser.add_argument("--branch", default="main", help="branch to be tested")
-    parser.add_argument("--account", default="", help="scheduler account to be tested")
+    parser.add_argument("--account", help="scheduler account to be tested")
     parser.add_argument("--repo", help="repository to be tested")
+    parser.add_argument("--reservation", help="scheduler reservation to be tested")
 
     args = parser.parse_args()
     system_name = args.system
@@ -66,15 +66,18 @@ def main():
     AUTH_TOKEN_URL = check_mandatory_env_var("AUTH_TOKEN_URL")
     SYSTEM_WORKING_DIR = check_mandatory_env_var("SYSTEM_WORKING_DIR")
 
-    keycloak = # Set up the OIDC authentication
-    client = # Set up the FirecREST client
+    oidc = f7t.ClientCredentialsAuth(CLIENT_ID, CLIENT_SECRET, AUTH_TOKEN_URL)
+    f7t_client = f7t.v2.Firecrest(firecrest_url=FIRECREST_URL, authorization=oidc)
 
-    all_systems = client. # Get the list of all available systems and print their names
+    all_systems = f7t_client.systems()
+    system_names = [system["name"] for system in all_systems]
+    print(f"Available systems: {', '.join(system_names)}")
 
     script_content = util.create_batch_script(
         repo=args.repo,
         num_nodes=2,
         account=args.account,
+        reservation=args.reservation,
         custom_modules=["cray", "cray-python"],
         branch=ref,
     )
@@ -94,27 +97,50 @@ def main():
     )
 
     if scheduler_health_info["healthy"]:
-        # Submit a job to the system with the provided script in `script_content` and
-        # SYSTEM_WORKING_DIR is the directory where the job will run
-        job = client. # TODO
+        job = f7t_client.submit(
+            system_name,
+            working_dir=SYSTEM_WORKING_DIR,
+            script_str=script_content,
+        )
         print(f"Submitted job: {job['jobId']}")
         while True:
-            # Check the status of the job every 10 seconds and break
-            # when the job is in a final state
+            try:
+                poll_result = f7t_client.job_info(system_name, jobid=job["jobId"])
+            except FirecrestException as e:
+                if e.responses[-1].status_code == 404:
+                    print(f"No available information yet for job {job['jobId']}")
+                    time.sleep(2)
+                    continue
+
+                raise e
+
+            print(f"Job status: {poll_result}")
+            state = poll_result[0]["status"]["state"]
+            if state in final_slurm_states:
+                print(f"Job is in final state: {state}")
+                break
+
+            print(
+                f"Status of the job is {state}, "
+                f"will try again in 10 seconds"
+            )
+            time.sleep(10)
 
         stdout_file_path = os.path.join(SYSTEM_WORKING_DIR, 'job.out')
         stderr_file_path = os.path.join(SYSTEM_WORKING_DIR, 'job.err')
 
         print(f"\nSTDOUT in {stdout_file_path}")
-        stdout_content = # Check the last 1000 lines of the job's stdout file
+        stdout_content = f7t_client.tail(system_name, path=stdout_file_path, num_lines=1000)["content"]
         print(stdout_content)
 
         print(f"\nSTDERR in {stderr_file_path}")
-        stderr_content = # Check the last 1000 lines of the job's stderr file
+        stderr_content = f7t_client.tail(system_name, path=stderr_file_path, num_lines=1000)["content"]
         print(stderr_content)
 
         # Some sanity checks:
-        # Check if the job is finished correctly (the state should be `COMPLETED`)
+        if poll_result[0]["status"]["state"] != "COMPLETED":
+            print(f"Job was not successful, status: {poll_result[0]['status']['state']}")
+            exit(1)
 
         util.check_output(stdout_content)
 

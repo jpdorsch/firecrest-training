@@ -7,7 +7,7 @@
 
 
 def create_batch_script(
-    repo, num_nodes=1, account=None, custom_modules=None, branch="main", constraint=None
+    repo, num_nodes=1, account=None, custom_modules=None, branch="main", constraint=None, reservation=None
 ):
     script = f"""#!/bin/bash -l
 #SBATCH --job-name="ci_job"
@@ -22,6 +22,9 @@ def create_batch_script(
 
     if account:
         script += f"#SBATCH --account={account}\n"
+
+    if reservation:
+        script += f"#SBATCH --reservation={reservation}\n"
 
     script += f"""
 
